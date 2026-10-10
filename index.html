@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#130d17">
+<title>Photo Motion Studio</title>
+<style>
+:root{color-scheme:dark;--bg:#130d17;--panel:#211725;--accent:#e04465;--muted:#c9bcca}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#382033,var(--bg) 55%);color:#fff;font:16px system-ui,-apple-system,sans-serif}
+main{max-width:760px;margin:auto;padding:22px 16px 40px}h1{margin:0;font-size:clamp(28px,7vw,42px)}p{line-height:1.45;color:var(--muted)}.tag{color:#ff9bb0;font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-size:12px}
+.panel{background:#211725eF;border:1px solid #50384f;border-radius:18px;padding:16px;margin:16px 0}
+label{display:block;font-weight:650;margin:13px 0 7px}input,select,textarea,button{font:inherit;width:100%;border-radius:12px;padding:12px;border:1px solid #62465e;background:#160f19;color:#fff}
+input[type=file]{padding:10px}input[type=range]{padding:0;accent-color:var(--accent)}button{border:0;background:var(--accent);font-weight:750;cursor:pointer;margin-top:12px}button.secondary{background:#493047}button:disabled{opacity:.5}
+canvas{width:100%;display:block;aspect-ratio:9/16;max-height:65vh;object-fit:contain;background:#080609;border-radius:14px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.small{font-size:13px}.status{min-height:24px;color:#ffd0da}.note{border-left:3px solid var(--accent);padding-left:12px}.download{display:block;text-align:center;color:#fff;background:#493047;padding:12px;border-radius:12px;margin-top:12px;text-decoration:none}
+</style>
+</head>
+<body><main>
+<div class="tag">Free • Runs in your browser</div>
+<h1>Photo Motion Studio</h1>
+<p>Turn one photo into a 20-second vertical MP4 with cinematic movement. Your photo stays on your device while you make the animation.</p>
+<div class="panel">
+<label for="photo">1. Choose a photo</label>
+<input id="photo" type="file" accept="image/*">
+<div class="row">
+<div><label for="motion">2. Motion style</label><select id="motion">
+<option value="push">Cinematic push-in</option><option value="pull">Slow pull-back</option><option value="pan">Pan across photo</option><option value="float">Gentle floating camera</option><option value="pulse">Subtle zoom pulse</option><option value="shake">Handheld camera</option>
+</select></div>
+<div><label for="format">Output format</label><select id="format"><option value="portrait">Vertical 9:16</option><option value="square">Square 1:1</option><option value="landscape">Landscape 16:9</option></select></div>
+</div>
+<label for="prompt">3. Your creative direction (for your own reference)</label>
+<textarea id="prompt" rows="2" placeholder="Example: summer mood, natural movement, warm cinematic look"></textarea>
+<p class="small">This starter version uses visual camera movement, not AI-generated body motion. The prompt is not sent to an AI model.</p>
+<label for="intensity">Motion strength: <span id="ival">50%</span></label>
+<input id="intensity" type="range" min="10" max="100" value="50">
+<button id="preview" class="secondary" disabled>Preview animation</button>
+<button id="render" disabled>Create 20-second video</button>
+<div class="status" id="status" role="status"></div>
+</div>
+<div class="panel">
+<label>Preview / export frame</label>
+<canvas id="stage" width="720" height="1280"></canvas>
+<a id="download" class="download" hidden download="photo-motion-studio.webm">Save video to phone</a>
+<p class="small">Video encoding depends on your browser. Most current Android Chrome versions support WebM; MP4 export is not guaranteed. If the download is WebM, it can still be played in many apps or converted later.</p>
+</div>
+<div class="panel">
+<h2>AI movement (separate feature)</h2>
+<p>Making a person stand up, dance, or move their limbs requires a video-generation model. Render's free hosting cannot run that model itself. This website does not pretend to generate AI movement; it creates the camera-animation version locally.</p>
+<p><a style="color:#ff9bb0" href="https://huggingface.co/spaces" target="_blank" rel="noopener">Browse Hugging Face community AI demos</a> — availability, queues, account requirements and free limits vary by demo. Never upload sensitive photos to a third-party demo unless you trust its privacy terms.</p>
+</div>
+</main>
+<script>
+const fileInput=document.querySelector('#photo'), canvas=document.querySelector('#stage'), ctx=canvas.getContext('2d');
+const previewBtn=document.querySelector('#preview'), renderBtn=document.querySelector('#render'), statusEl=document.querySelector('#status'), downloadLink=document.querySelector('#download');
+const motionEl=document.querySelector('#motion'), formatEl=document.querySelector('#format'), intensityEl=document.querySelector('#intensity'), ival=document.querySelector('#ival');
+let img=null, raf=0, lastUrl=null;
+function dimensions(){const f=formatEl.value;return f==='square'?[900,900]:f==='landscape'?[1280,720]:[720,1280]}
+function resizeCanvas(){const [w,h]=dimensions();canvas.width=w;canvas.height=h;if(img)draw(0)}
+function draw(t){
+ const w=canvas.width,h=canvas.height;ctx.fillStyle='#080609';ctx.fillRect(0,0,w,h);if(!img)return;
+ const strength=Number(intensityEl.value)/100, p=(t%20000)/20000;
+ let scale=1+strength*.28, x=0,y=0;
+ const mode=motionEl.value;
+ if(mode==='pull')scale=1+strength*.28*(1-p);
+ if(mode==='push')scale=1+strength*.28*p;
+ if(mode==='pan'){scale=1+strength*.16;x=(p-.5)*w*strength*.20}
+ if(mode==='float'){scale=1+strength*.12;x=Math.sin(p*Math.PI*2)*w*strength*.045;y=Math.cos(p*Math.PI*2)*h*strength*.035}
+ if(mode==='pulse')scale=1+strength*.16*(.5+.5*Math.sin(p*Math.PI*4));
+ if(mode==='shake'){scale=1+strength*.22;x=Math.sin(t*.025)*w*strength*.012;y=Math.cos(t*.031)*h*strength*.012}
+ const fit=Math.max(w/img.width,h/img.height)*scale, iw=img.width*fit, ih=img.height*fit;
+ ctx.save();ctx.translate(w/2+x,h/2+y);ctx.drawImage(img,-iw/2,-ih/2,iw,ih);ctx.restore();
+ // Soft cinematic vignette
+ const g=ctx.createRadialGradient(w/2,h/2,Math.min(w,h)*.18,w/2,h/2,Math.max(w,h)*.72);
+ g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(1,'rgba(0,0,0,.22)');ctx.fillStyle=g;ctx.fillRect(0,0,w,h);
+}
+fileInput.addEventListener('change',()=>{
+ const f=fileInput.files&&fileInput.files[0];if(!f)return;
+ if(!f.type.startsWith('image/')){statusEl.textContent='Please choose an image file.';return}
+ const url=URL.createObjectURL(f), im=new Image();
+ im.onload=()=>{img=im;resizeCanvas();previewBtn.disabled=false;renderBtn.disabled=false;statusEl.textContent='Photo loaded. Choose a motion style.';URL.revokeObjectURL(url)};
+ im.onerror=()=>{statusEl.textContent='Could not open that image.';URL.revokeObjectURL(url)};im.src=url;
+});
+formatEl.addEventListener('change',resizeCanvas);
+intensityEl.addEventListener('input',()=>ival.textContent=intensityEl.value+'%');
+motionEl.addEventListener('change',()=>draw(0));
+previewBtn.addEventListener('click',()=>{
+ if(!img)return;cancelAnimationFrame(raf);const start=performance.now();
+ const tick=now=>{draw(now-start);raf=requestAnimationFrame(tick)};raf=requestAnimationFrame(tick);
+ statusEl.textContent='Preview playing. Press Create 20-second video to export.';
+});
+renderBtn.addEventListener('click',async()=>{
+ if(!img)return;
+ cancelAnimationFrame(raf);downloadLink.hidden=true;renderBtn.disabled=true;previewBtn.disabled=true;
+ const duration=20000, fps=30, stream=canvas.captureStream(fps);
+ const types=['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
+ const mime=types.find(t=>MediaRecorder.isTypeSupported(t));
+ if(!mime){statusEl.textContent='This browser does not support video recording. Try Chrome on Android or desktop Chrome.';renderBtn.disabled=false;previewBtn.disabled=false;return}
+ const chunks=[];let recorder;
+ try{recorder=new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:5000000)}}
+ catch(e){statusEl.textContent='Could not start video recording in this browser.';renderBtn.disabled=false;previewBtn.disabled=false;return}
+ recorder.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data)};
+ recorder.onerror=()=>{statusEl.textContent='Recording failed. Try a smaller photo or another browser.';renderBtn.disabled=false;previewBtn.disabled=false};
+ recorder.onstop=()=>{
+  stream.getTracks().forEach(t=>t.stop());
+  const blob=new Blob(chunks,{type:mime});if(lastUrl)URL.revokeObjectURL(lastUrl);lastUrl=URL.createObjectURL(blob);
+  downloadLink.href=lastUrl;downloadLink.download='photo-motion-20s.webm';downloadLink.textContent='Save video to phone ('+(blob.size/1024/1024).toFixed(1)+' MB)';downloadLink.hidden=false;
+  statusEl.textContent='Done — your 20-second WebM video is ready.';renderBtn.disabled=false;previewBtn.disabled=false;
+ };
+ const start=performance.now();recorder.start(250);
+ function frame(now){draw(Math.min(now-start,duration));const elapsed=Math.min(now-start,duration);statusEl.textContent='Creating video: '+Math.round(elapsed/duration*100)+'%';if(elapsed<duration){raf=requestAnimationFrame(frame)}else{draw(duration);setTimeout(()=>{if(recorder.state!=='inactive')recorder.stop()},250)}}
+ draw(0);raf=requestAnimationFrame(frame);
+});
+draw(0);
+</script></body></html>
