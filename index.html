@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#130d17">
+<script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js" defer></script>
 <title>Photo Motion Studio</title>
 <style>
 :root{color-scheme:dark;--bg:#130d17;--panel:#211725;--accent:#e04465;--muted:#c9bcca}
@@ -82,8 +83,23 @@ fileInput.addEventListener('change', async ()=>{
  statusEl.textContent='Loading '+(f.name||'photo')+'…';
  if(f.size===0){statusEl.textContent='That file is empty. Please choose another photo.';return}
  if(!f.type.startsWith('image/')){statusEl.textContent='That file is not recognised as an image. Please choose a JPG or PNG photo.';return}
- // HEIC/HEIF images are not decoded by every Android browser. Give a clear message instead of silently leaving a blank canvas.
+ // HEIC/HEIF images are not decoded by every Android browser. Convert in-browser when possible.
  const looksHeic=/\.(heic|heif)$/i.test(f.name||'') || /heic|heif/i.test(f.type||'');
+ let fileToLoad=f;
+ if(looksHeic && window.heic2any){
+   statusEl.textContent='Converting HEIC photo…';
+   try{
+     const converted=await heic2any({blob:f,toType:'image/jpeg',quality:0.92});
+     const blob=Array.isArray(converted)?converted[0]:converted;
+     const newName=(f.name||'photo').replace(/\.(heic|heif)$/i,'.jpg');
+     fileToLoad=new File([blob],newName,{type:'image/jpeg'});
+     statusEl.textContent='Loading '+newName+'…';
+   }catch(convErr){
+     statusEl.textContent='Could not convert this HEIC photo. Please choose a JPG or PNG copy instead.';
+     console.error('Photo Motion Studio HEIC conversion error:',convErr);
+     return;
+   }
+ }
  const tryLoad = src => new Promise((resolve,reject)=>{
    const im=new Image();
    im.onload=()=>{if(im.naturalWidth&&im.naturalHeight)resolve(im);else reject(new Error('Image has no dimensions'))};
@@ -92,7 +108,7 @@ fileInput.addEventListener('change', async ()=>{
  });
  try {
    let loaded;
-   const objectUrl=URL.createObjectURL(f);
+   const objectUrl=URL.createObjectURL(fileToLoad);
    try { loaded=await tryLoad(objectUrl); }
    catch(firstError) {
      // Fallback for Android pickers that provide an object URL the image element cannot decode.
@@ -100,7 +116,7 @@ fileInput.addEventListener('change', async ()=>{
        const reader=new FileReader();
        reader.onload=()=>resolve(reader.result);
        reader.onerror=()=>reject(new Error('Could not read selected file'));
-       reader.readAsDataURL(f);
+       reader.readAsDataURL(fileToLoad);
      });
      loaded=await tryLoad(dataUrl);
    } finally { URL.revokeObjectURL(objectUrl); }
@@ -109,9 +125,7 @@ fileInput.addEventListener('change', async ()=>{
    previewBtn.disabled=false; renderBtn.disabled=false;
    statusEl.textContent='Photo loaded ('+loaded.naturalWidth+' × '+loaded.naturalHeight+'). Choose a motion style.';
  } catch(err) {
-   statusEl.textContent=looksHeic
-    ? 'This looks like a HEIC/HEIF photo, which this browser cannot decode. Choose a JPG/PNG copy instead.'
-    : 'Could not read this photo. Try a JPG or PNG image, or choose a smaller copy.';
+   statusEl.textContent='Could not read this photo. Try a JPG or PNG image, or choose a smaller copy.';
    console.error('Photo Motion Studio image load error:',err);
  }
 });
