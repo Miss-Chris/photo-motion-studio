@@ -35,8 +35,8 @@ canvas{width:100%;display:block;aspect-ratio:9/16;max-height:65vh;object-fit:con
 <p class="small">For best results, choose a JPG or PNG under about 15 MB. HEIC/HEIF photos may not open in every browser. This starter version uses visual camera movement, not AI-generated body motion. The prompt is not sent to an AI model.</p>
 <label for="intensity">Motion strength: <span id="ival">50%</span></label>
 <input id="intensity" type="range" min="10" max="100" value="50">
-<button id="preview" class="secondary" disabled>Preview animation</button>
-<button id="render" disabled>Create 20-second video</button>
+<button id="preview" class="secondary">Preview animation</button>
+<button id="render">Create 20-second video</button>
 <div class="status" id="status" role="status"></div>
 </div>
 <div class="panel">
@@ -75,77 +75,89 @@ function draw(t){
  const g=ctx.createRadialGradient(w/2,h/2,Math.min(w,h)*.18,w/2,h/2,Math.max(w,h)*.72);
  g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(1,'rgba(0,0,0,.22)');ctx.fillStyle=g;ctx.fillRect(0,0,w,h);
 }
-fileInput.addEventListener('change', async ()=>{
- const f=fileInput.files&&fileInput.files[0];
- if(!f)return;
- // Reset controls until the selected file is successfully decoded.
- img=null; previewBtn.disabled=true; renderBtn.disabled=true; downloadLink.hidden=true;
- statusEl.textContent='Loading '+(f.name||'photo')+'…';
- if(f.size===0){statusEl.textContent='That file is empty. Please choose another photo.';return}
- if(!f.type.startsWith('image/')){statusEl.textContent='That file is not recognised as an image. Please choose a JPG or PNG photo.';return}
- // HEIC/HEIF images are not decoded by every Android browser. Convert in-browser when possible.
- const looksHeic=/\.(heic|heif)$/i.test(f.name||'') || /heic|heif/i.test(f.type||'');
- let fileToLoad=f;
- if(looksHeic && window.heic2any){
-   statusEl.textContent='Converting HEIC photo…';
-   try{
+let loadPromise=null;
+async function ensurePhoto(){
+ if(img)return true;
+ if(loadPromise)return loadPromise;
+ loadPromise=(async()=>{
+  const f=fileInput.files&&fileInput.files[0];
+  if(!f){statusEl.textContent='Choose a photo first, then try again.';return false;}
+  img=null;downloadLink.hidden=true;
+  statusEl.textContent='Loading '+(f.name||'photo')+'…';
+  if(f.size===0){statusEl.textContent='That file is empty. Please choose another photo.';return false;}
+  if(!f.type.startsWith('image/')){statusEl.textContent='That file is not recognised as an image (type: '+(f.type||'unknown')+'). Please choose a JPG or PNG photo.';return false;}
+  const looksHeic=/\.(heic|heif)$/i.test(f.name||'') || /heic|heif/i.test(f.type||'');
+  let fileToLoad=f;
+  if(looksHeic){
+   if(window.heic2any){
+    statusEl.textContent='Converting HEIC photo…';
+    try{
      const converted=await heic2any({blob:f,toType:'image/jpeg',quality:0.92});
      const blob=Array.isArray(converted)?converted[0]:converted;
      const newName=(f.name||'photo').replace(/\.(heic|heif)$/i,'.jpg');
      fileToLoad=new File([blob],newName,{type:'image/jpeg'});
      statusEl.textContent='Loading '+newName+'…';
-   }catch(convErr){
-     statusEl.textContent='Could not convert this HEIC photo. Please choose a JPG or PNG copy instead.';
+    }catch(convErr){
+     statusEl.textContent='Could not convert this HEIC photo ('+((convErr&&convErr.message)||'conversion failed')+'). Please choose a JPG or PNG copy instead.';
      console.error('Photo Motion Studio HEIC conversion error:',convErr);
-     return;
+     return false;
+    }
+   }else{
+    statusEl.textContent='This is a HEIC photo but the converter did not load. Check your connection, refresh the page, or choose a JPG copy.';
+    return false;
    }
- }
- const tryLoad = src => new Promise((resolve,reject)=>{
+  }
+  const tryLoad=src=>new Promise((resolve,reject)=>{
    const im=new Image();
-   im.onload=()=>{if(im.naturalWidth&&im.naturalHeight)resolve(im);else reject(new Error('Image has no dimensions'))};
-   im.onerror=()=>reject(new Error('Browser could not decode this image'));
+   im.onload=()=>{if(im.naturalWidth&&im.naturalHeight)resolve(im);else reject(new Error('image has no dimensions'))};
+   im.onerror=()=>reject(new Error('browser could not decode the image'));
    im.src=src;
- });
- try {
+  });
+  try{
    let loaded;
    const objectUrl=URL.createObjectURL(fileToLoad);
-   try { loaded=await tryLoad(objectUrl); }
-   catch(firstError) {
-     // Fallback for Android pickers that provide an object URL the image element cannot decode.
-     const dataUrl=await new Promise((resolve,reject)=>{
-       const reader=new FileReader();
-       reader.onload=()=>resolve(reader.result);
-       reader.onerror=()=>reject(new Error('Could not read selected file'));
-       reader.readAsDataURL(fileToLoad);
-     });
-     loaded=await tryLoad(dataUrl);
-   } finally { URL.revokeObjectURL(objectUrl); }
+   try{loaded=await tryLoad(objectUrl);}
+   catch(firstError){
+    const dataUrl=await new Promise((resolve,reject)=>{
+     const reader=new FileReader();
+     reader.onload=()=>resolve(reader.result);
+     reader.onerror=()=>reject(new Error('could not read the selected file'));
+     reader.readAsDataURL(fileToLoad);
+    });
+    loaded=await tryLoad(dataUrl);
+   }finally{URL.revokeObjectURL(objectUrl);}
    img=loaded;
    resizeCanvas();
-   previewBtn.disabled=false; renderBtn.disabled=false;
    statusEl.textContent='Photo loaded ('+loaded.naturalWidth+' × '+loaded.naturalHeight+'). Choose a motion style.';
- } catch(err) {
-   statusEl.textContent='Could not read this photo. Try a JPG or PNG image, or choose a smaller copy.';
+   return true;
+  }catch(err){
+   statusEl.textContent='Could not read this photo ('+((err&&err.message)||'unknown error')+'). Try a JPG or PNG image, or a smaller copy.';
    console.error('Photo Motion Studio image load error:',err);
- }
-});
+   return false;
+  }finally{loadPromise=null;}
+ })();
+ return loadPromise;
+}
+fileInput.addEventListener('change',()=>{loadPromise=null;img=null;ensurePhoto();});
+fileInput.addEventListener('input',()=>{if(!img&&!loadPromise){ensurePhoto();}});
 formatEl.addEventListener('change',resizeCanvas);
 intensityEl.addEventListener('input',()=>ival.textContent=intensityEl.value+'%');
 motionEl.addEventListener('change',()=>draw(0));
-previewBtn.addEventListener('click',()=>{
- if(!img)return;cancelAnimationFrame(raf);const start=performance.now();
+previewBtn.addEventListener('click',async()=>{
+ if(!await ensurePhoto())return;
+ cancelAnimationFrame(raf);const start=performance.now();
  const tick=now=>{draw(now-start);raf=requestAnimationFrame(tick)};raf=requestAnimationFrame(tick);
  statusEl.textContent='Preview playing. Press Create 20-second video to export.';
 });
 renderBtn.addEventListener('click',async()=>{
- if(!img)return;
+ if(!await ensurePhoto())return;
  cancelAnimationFrame(raf);downloadLink.hidden=true;renderBtn.disabled=true;previewBtn.disabled=true;
  const duration=20000, fps=30, stream=canvas.captureStream(fps);
  const types=['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
  const mime=types.find(t=>MediaRecorder.isTypeSupported(t));
  if(!mime){statusEl.textContent='This browser does not support video recording. Try Chrome on Android or desktop Chrome.';renderBtn.disabled=false;previewBtn.disabled=false;return}
  const chunks=[];let recorder;
- try{recorder=new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:5000000)}}
+ try{recorder=new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:5000000})}
  catch(e){statusEl.textContent='Could not start video recording in this browser.';renderBtn.disabled=false;previewBtn.disabled=false;return}
  recorder.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data)};
  recorder.onerror=()=>{statusEl.textContent='Recording failed. Try a smaller photo or another browser.';renderBtn.disabled=false;previewBtn.disabled=false};
