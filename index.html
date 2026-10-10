@@ -22,7 +22,7 @@ canvas{width:100%;display:block;aspect-ratio:9/16;max-height:65vh;object-fit:con
 <p>Turn one photo into a 20-second vertical MP4 with cinematic movement. Your photo stays on your device while you make the animation.</p>
 <div class="panel">
 <label for="photo">1. Choose a photo</label>
-<input id="photo" type="file" accept="image/*">
+<input id="photo" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/*">
 <div class="row">
 <div><label for="motion">2. Motion style</label><select id="motion">
 <option value="push">Cinematic push-in</option><option value="pull">Slow pull-back</option><option value="pan">Pan across photo</option><option value="float">Gentle floating camera</option><option value="pulse">Subtle zoom pulse</option><option value="shake">Handheld camera</option>
@@ -31,7 +31,7 @@ canvas{width:100%;display:block;aspect-ratio:9/16;max-height:65vh;object-fit:con
 </div>
 <label for="prompt">3. Your creative direction (for your own reference)</label>
 <textarea id="prompt" rows="2" placeholder="Example: summer mood, natural movement, warm cinematic look"></textarea>
-<p class="small">This starter version uses visual camera movement, not AI-generated body motion. The prompt is not sent to an AI model.</p>
+<p class="small">For best results, choose a JPG or PNG under about 15 MB. HEIC/HEIF photos may not open in every browser. This starter version uses visual camera movement, not AI-generated body motion. The prompt is not sent to an AI model.</p>
 <label for="intensity">Motion strength: <span id="ival">50%</span></label>
 <input id="intensity" type="range" min="10" max="100" value="50">
 <button id="preview" class="secondary" disabled>Preview animation</button>
@@ -74,12 +74,46 @@ function draw(t){
  const g=ctx.createRadialGradient(w/2,h/2,Math.min(w,h)*.18,w/2,h/2,Math.max(w,h)*.72);
  g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(1,'rgba(0,0,0,.22)');ctx.fillStyle=g;ctx.fillRect(0,0,w,h);
 }
-fileInput.addEventListener('change',()=>{
- const f=fileInput.files&&fileInput.files[0];if(!f)return;
- if(!f.type.startsWith('image/')){statusEl.textContent='Please choose an image file.';return}
- const url=URL.createObjectURL(f), im=new Image();
- im.onload=()=>{img=im;resizeCanvas();previewBtn.disabled=false;renderBtn.disabled=false;statusEl.textContent='Photo loaded. Choose a motion style.';URL.revokeObjectURL(url)};
- im.onerror=()=>{statusEl.textContent='Could not open that image.';URL.revokeObjectURL(url)};im.src=url;
+fileInput.addEventListener('change', async ()=>{
+ const f=fileInput.files&&fileInput.files[0];
+ if(!f)return;
+ // Reset controls until the selected file is successfully decoded.
+ img=null; previewBtn.disabled=true; renderBtn.disabled=true; downloadLink.hidden=true;
+ statusEl.textContent='Loading '+(f.name||'photo')+'…';
+ if(f.size===0){statusEl.textContent='That file is empty. Please choose another photo.';return}
+ if(!f.type.startsWith('image/')){statusEl.textContent='That file is not recognised as an image. Please choose a JPG or PNG photo.';return}
+ // HEIC/HEIF images are not decoded by every Android browser. Give a clear message instead of silently leaving a blank canvas.
+ const looksHeic=/\.(heic|heif)$/i.test(f.name||'') || /heic|heif/i.test(f.type||'');
+ const tryLoad = src => new Promise((resolve,reject)=>{
+   const im=new Image();
+   im.onload=()=>{if(im.naturalWidth&&im.naturalHeight)resolve(im);else reject(new Error('Image has no dimensions'))};
+   im.onerror=()=>reject(new Error('Browser could not decode this image'));
+   im.src=src;
+ });
+ try {
+   let loaded;
+   const objectUrl=URL.createObjectURL(f);
+   try { loaded=await tryLoad(objectUrl); }
+   catch(firstError) {
+     // Fallback for Android pickers that provide an object URL the image element cannot decode.
+     const dataUrl=await new Promise((resolve,reject)=>{
+       const reader=new FileReader();
+       reader.onload=()=>resolve(reader.result);
+       reader.onerror=()=>reject(new Error('Could not read selected file'));
+       reader.readAsDataURL(f);
+     });
+     loaded=await tryLoad(dataUrl);
+   } finally { URL.revokeObjectURL(objectUrl); }
+   img=loaded;
+   resizeCanvas();
+   previewBtn.disabled=false; renderBtn.disabled=false;
+   statusEl.textContent='Photo loaded ('+loaded.naturalWidth+' × '+loaded.naturalHeight+'). Choose a motion style.';
+ } catch(err) {
+   statusEl.textContent=looksHeic
+    ? 'This looks like a HEIC/HEIF photo, which this browser cannot decode. Choose a JPG/PNG copy instead.'
+    : 'Could not read this photo. Try a JPG or PNG image, or choose a smaller copy.';
+   console.error('Photo Motion Studio image load error:',err);
+ }
 });
 formatEl.addEventListener('change',resizeCanvas);
 intensityEl.addEventListener('input',()=>ival.textContent=intensityEl.value+'%');
